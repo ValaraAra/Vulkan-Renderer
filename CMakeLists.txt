@@ -47,6 +47,8 @@ add_executable(vulkanapp
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/renderer.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/utility.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/utility.cpp"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/camera.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/camera.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/resources.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/scene.h"
 )

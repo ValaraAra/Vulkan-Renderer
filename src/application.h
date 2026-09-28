@@ -1,4 +1,5 @@
 #pragma once
+#include "camera.h"
 #include "renderer.h"
 
 #include <SDL3/SDL.h>
@@ -21,12 +22,8 @@ class Application
 	static const uint32_t DEFAULT_HEIGHT = 720;
 
 	SDL_Window* window = nullptr;
+	Camera camera;
 	Renderer renderer;
 
 	bool running = false;
-
-	// Camera
-	float camDistance = 3;
-	float camYaw = glm::half_pi<float>();
-	float camPitch = 0;
 };

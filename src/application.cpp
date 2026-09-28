@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <glm/gtc/matrix_transform.hpp>
-#include <stdexcept>
 #include <tracy/Tracy.hpp>
 
 bool Application::initialize()
@@ -36,7 +35,7 @@ bool Application::initialize()
 	// Load scene
 	try
 	{
-		renderer.loadData(std::filesystem::path{ASSET_DIR} / "models/gltf/sponza/scene.gltf");
+		renderer.loadData(std::filesystem::path{ASSET_DIR} / "models/gltf/sponza-unity-remaster/scene.gltf");
 	}
 	catch (const RenderError& error)
 	{
@@ -52,6 +51,9 @@ void Application::run()
 	// Get key state and start time
 	const bool* keys = SDL_GetKeyboardState(nullptr);
 	uint64_t previousTime = SDL_GetTicks();
+
+	// Aspect ratio
+	float prevAspect = 0.0f;
 
 	// Game loop
 	running = true;
@@ -72,10 +74,15 @@ void Application::run()
 			if (!running) { break; }
 		}
 
-		// Skip rendering if the window doesn't have a valid size (minimized or resized to 0 width/height)
+		// Get window size
 		int windowWidth, windowHeight;
-		if (!SDL_GetWindowSizeInPixels(window, &windowWidth, &windowHeight) || windowWidth == 0 || windowHeight == 0
-			|| (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED))
+		SDL_GetWindowSizeInPixels(window, &windowWidth, &windowHeight);
+
+		// Window size validity (minimized or resized to 0 width/height)
+		const bool validSize = windowWidth > 0 && windowHeight > 0 && !(SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED);
+
+		// Skip rendering if the window doesn't have a valid size
+		if (!validSize)
 		{
 			if (SDL_WaitEventTimeout(&event, 100)) { handleEvent(event); }
 			if (!running) { break; }
@@ -83,63 +90,26 @@ void Application::run()
 			continue;
 		}
 
+		// Resize camera if aspect changed
+		const float aspect = windowWidth / static_cast<float>(windowHeight);
+		if (prevAspect != aspect)
+		{
+			camera.resize(aspect);
+			prevAspect = aspect;
+		}
+
 		// Update time
 		uint64_t currentTime = SDL_GetTicks();
 		const float deltaTime = (currentTime - previousTime) / 1000.0f;
 		previousTime = currentTime;
 
-		// Handle keys
-		{
-			ZoneScopedN("Keys");
-
-			constexpr float speed = 1.0f;
-			constexpr float epsilon = 0.01f;
-			constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
-
-			float zoomSpeed = speed;
-
-			if (keys[SDL_SCANCODE_LSHIFT]) { zoomSpeed *= 3.0f; }
-			if (keys[SDL_SCANCODE_RSHIFT]) { zoomSpeed *= 10.0f; }
-
-			if (keys[SDL_SCANCODE_A]) { camYaw += speed * deltaTime; }
-			if (keys[SDL_SCANCODE_D]) { camYaw -= speed * deltaTime; }
-			if (keys[SDL_SCANCODE_W])
-			{
-				camPitch += speed * deltaTime;
-				camPitch = std::clamp(camPitch, -pitchLimit, pitchLimit);
-			}
-			if (keys[SDL_SCANCODE_S])
-			{
-				camPitch -= speed * deltaTime;
-				camPitch = std::clamp(camPitch, -pitchLimit, pitchLimit);
-			}
-			if (keys[SDL_SCANCODE_UP])
-			{
-				camDistance -= zoomSpeed * deltaTime;
-				camDistance = std::max(camDistance, epsilon);
-			}
-			if (keys[SDL_SCANCODE_DOWN]) { camDistance += zoomSpeed * deltaTime; }
-		}
-
 		// Update camera
-		glm::mat4 viewProjectionMatrix;
-		{
-			ZoneScopedN("Camera");
-
-			glm::vec3 camPosition =
-				glm::vec3(std::cosf(camYaw) * cosf(camPitch), sinf(camPitch), sinf(camYaw) * cosf(camPitch)) * camDistance;
-
-			const float aspectRatio = windowWidth / static_cast<float>(windowHeight);
-
-			glm::mat4 viewMatrix = glm::lookAtRH(camPosition, glm::vec3(0), glm::vec3(0, 1, 0));
-			glm::mat4 projectionMatrix = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
-			viewProjectionMatrix = projectionMatrix * viewMatrix;
-		}
+		camera.update(keys, deltaTime);
 
 		// Render
 		try
 		{
-			renderer.render(viewProjectionMatrix);
+			renderer.render(camera.getViewProjection());
 		}
 		catch (const RenderError& error)
 		{
