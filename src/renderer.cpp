@@ -1907,6 +1907,8 @@ void Renderer::updateTextureDescriptors()
 {
 	ZoneScopedN("Update Texture Descriptors");
 
+	assert(textures.size() <= MaxTextures && "Overran texture limit!");
+
 	std::vector<VkDescriptorImageInfo> imageDescriptors;
 	imageDescriptors.reserve(textures.size());
 
