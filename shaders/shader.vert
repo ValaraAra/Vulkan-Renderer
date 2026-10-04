@@ -71,6 +71,6 @@ void main()
 	outColor = vert.color;
 	outNormal = ri.normalMatrix * vert.normal;
 	outUV = vert.uv;
-	outTextureIndex = mat.textureID == 0 ? 0 : mat.textureID - 1;
+	outTextureIndex = mat.textureID;
 	outMaterialBaseColor = mat.baseColor;
 }

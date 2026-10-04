@@ -1,7 +1,5 @@
 #include "renderer.h"
 
-#include "models.h"
-#include "resources.h"
 #include "utility.h"
 
 #include <algorithm>
@@ -77,9 +75,8 @@ void Renderer::loadModel(const Model& model)
 	for (const ModelTexture& modelTexture : model.textures)
 	{
 		textures.push_back({
-			.imageID = modelImageIDs[modelTexture.image],
-			.samplerID =
-				modelTexture.sampler == InvalidIndex ? textures[0].samplerID : modelSamplerIDs[modelTexture.sampler],
+			.imageID = modelTexture.image == InvalidIndex ? FallbackIndex : modelImageIDs[modelTexture.image],
+			.samplerID = modelTexture.sampler == InvalidIndex ? FallbackIndex : modelSamplerIDs[modelTexture.sampler],
 		});
 	}
 
@@ -88,7 +85,7 @@ void Renderer::loadModel(const Model& model)
 	{
 		materials.push_back({
 			.baseColor = modelMaterial.baseColor,
-			.textureID = modelMaterial.textureID == InvalidIndex ? 0 : modelMaterial.textureID + texturesBase + 1,
+			.textureID = modelMaterial.textureID == InvalidIndex ? FallbackIndex : modelMaterial.textureID + texturesBase,
 		});
 	}
 
@@ -98,7 +95,7 @@ void Renderer::loadModel(const Model& model)
 		Mesh mesh = modelMesh;
 		for (SubMesh& subMesh : mesh.subMeshes)
 		{
-			subMesh.materialID = subMesh.materialID == InvalidIndex ? 1 : subMesh.materialID + materialsBase + 1;
+			subMesh.materialID = subMesh.materialID == InvalidIndex ? FallbackIndex : subMesh.materialID + materialsBase;
 		}
 
 		meshes.push_back(std::move(mesh));
@@ -173,17 +170,17 @@ void Renderer::loadModel(const Model& model)
 	{
 		auto [node, nodeID] = scene.createNode();
 		node.setTransform(modelNode.transform);
-		node.meshID = modelNode.mesh == InvalidIndex ? 0 : modelNode.mesh + meshesBase + 1;
-		node.parentID = modelNode.parent == InvalidIndex ? 0 : modelNode.parent + nodesBase + 1;
-		node.firstChildID = modelNode.firstChild == InvalidIndex ? 0 : modelNode.firstChild + nodesBase + 1;
-		node.nextSiblingID = modelNode.nextSibling == InvalidIndex ? 0 : modelNode.nextSibling + nodesBase + 1;
+		node.meshID = modelNode.mesh == InvalidIndex ? InvalidIndex : modelNode.mesh + meshesBase;
+		node.parentID = modelNode.parent == InvalidIndex ? InvalidIndex : modelNode.parent + nodesBase;
+		node.firstChildID = modelNode.firstChild == InvalidIndex ? InvalidIndex : modelNode.firstChild + nodesBase;
+		node.nextSiblingID = modelNode.nextSibling == InvalidIndex ? InvalidIndex : modelNode.nextSibling + nodesBase;
 	}
 
 	for (uint32_t rootIndex : model.rootNodes)
 	{
-		uint32_t nodeID = rootIndex + nodesBase + 1;
+		uint32_t nodeID = rootIndex + nodesBase;
 
-		if (!rootNodeID) { rootNodeID = nodeID; }
+		if (rootNodeID == InvalidIndex) { rootNodeID = nodeID; }
 		else
 		{
 			scene.getNode(lastRootNodeID).nextSiblingID = nodeID;
@@ -264,7 +261,7 @@ void Renderer::render(const glm::mat4& viewProjectionMatrix)
 		stagedRenderItems.clear();
 
 		uint32_t nodeID = rootNodeID;
-		while (nodeID)
+		while (nodeID != InvalidIndex)
 		{
 			Node& node = scene.getNode(nodeID);
 			nodeRenderStack.push_back({&node, glm::mat4(1.0f)});
@@ -278,9 +275,9 @@ void Renderer::render(const glm::mat4& viewProjectionMatrix)
 			glm::mat4 worldMatrix = parentTransform * node->getTransform();
 
 			// Draw the nodes mesh! (if it has one)
-			if (node->meshID)
+			if (node->meshID != InvalidIndex)
 			{
-				Mesh& mesh = meshes[node->meshID - 1];
+				Mesh& mesh = meshes[node->meshID];
 
 				for (SubMesh& subMesh : mesh.subMeshes)
 				{
@@ -300,7 +297,7 @@ void Renderer::render(const glm::mat4& viewProjectionMatrix)
 						RenderItem{
 							.worldMatrix = worldMatrix,
 							.normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldMatrix))),
-							.materialIndex = subMesh.materialID - 1,
+							.materialIndex = subMesh.materialID,
 						}
 					);
 				}
@@ -308,7 +305,7 @@ void Renderer::render(const glm::mat4& viewProjectionMatrix)
 
 			// Push children to stack for processing
 			uint32_t childNodeID = node->firstChildID;
-			while (childNodeID)
+			while (childNodeID != InvalidIndex)
 			{
 				Node& child = scene.getNode(childNodeID);
 				nodeRenderStack.push_back({&child, worldMatrix});
@@ -434,8 +431,8 @@ void Renderer::render(const glm::mat4& viewProjectionMatrix)
 
 		// Frame constants
 		FrameConstants frameConstants;
-		GPUBuffer& vertexBuffer = buffers[vertexBufferID - 1];
-		GPUBuffer& materialBuffer = buffers[materialBufferID - 1];
+		GPUBuffer& vertexBuffer = buffers[vertexBufferID];
+		GPUBuffer& materialBuffer = buffers[materialBufferID];
 		frameConstants.vertexBufferAddress = vertexBuffer.deviceAddress;
 		frameConstants.materialBufferAddress = materialBuffer.deviceAddress;
 		frameConstants.renderItemsBufferAddress = frameResource.renderItemBuffer.deviceAddress;
@@ -452,7 +449,7 @@ void Renderer::render(const glm::mat4& viewProjectionMatrix)
 		);
 
 		// Bind index buffer
-		GPUBuffer& indexBuffer = buffers[indexBufferID - 1];
+		GPUBuffer& indexBuffer = buffers[indexBufferID];
 		vkCmdBindIndexBuffer(frameResource.commandBuffer, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
 		// Begin dynamic rendering
@@ -1629,8 +1626,8 @@ Renderer::createImage(VkCommandBuffer commandBuffer, unsigned char* imageData, u
 
 	images.push_back(gpuImage);
 
-	// Image ID is 1-based (0 is NULL, ID - 1 is index)
-	const uint32_t imageID = static_cast<uint32_t>(images.size());
+	// Image ID is 0-based
+	const uint32_t imageID = static_cast<uint32_t>(images.size() - 1);
 	return {imageID, stagingBuffer};
 }
 
@@ -1699,14 +1696,16 @@ void Renderer::createFallbackTexture()
 		.data = reinterpret_cast<unsigned char*>(&whitePixelData),
 	};
 
+	// Create image
 	VkCommandBuffer fallbackImageCommandBuffer = startTransientCommandBuffer();
 	auto [whitePixelID, whitePixelStagingBuffer] =
 		createImage(fallbackImageCommandBuffer, whitePixel.data, whitePixel.width, whitePixel.height, whitePixel.channels);
-	fallbackImageID = whitePixelID;
 	submitTransientCommandBuffer(fallbackImageCommandBuffer);
 	vmaDestroyBuffer(vmaAllocator, whitePixelStagingBuffer.buffer, whitePixelStagingBuffer.allocation);
 
-	// Fallback texture sampler
+	assert(whitePixelID == FallbackIndex && "Fallback image is not at  fallback index!");
+
+	// Fallback sampler
 	VkSamplerCreateInfo samplerInfo{
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.magFilter = VK_FILTER_NEAREST,
@@ -1716,6 +1715,8 @@ void Renderer::createFallbackTexture()
 		.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 		.compareEnable = VK_FALSE,
 	};
+
+	// Create sampler
 	VkSampler sampler = VK_NULL_HANDLE;
 	if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
 	{
@@ -1724,13 +1725,15 @@ void Renderer::createFallbackTexture()
 
 	// Store sampler
 	samplers.push_back(sampler);
-	uint32_t fallbackSamplerID = static_cast<uint32_t>(samplers.size());
+	assert(samplers.size() - 1 == FallbackIndex && "Fallback sampler is not at fallback index!");
 
 	// Store texture
-	textures.push_back(Texture{.imageID = fallbackImageID, .samplerID = fallbackSamplerID});
+	textures.push_back(Texture{.imageID = FallbackIndex, .samplerID = FallbackIndex});
+	assert(textures.size() - 1 == FallbackIndex && "Fallback texture is not at fallback index!");
 
 	// Store material
-	materials.push_back(Material{.baseColor = glm::vec4(1.0f), .textureID = 0});
+	materials.push_back(Material{.baseColor = glm::vec4(1.0f), .textureID = FallbackIndex});
+	assert(materials.size() - 1 == FallbackIndex && "Fallback material is not at fallback index!");
 }
 
 std::vector<uint32_t> Renderer::uploadImages(const std::vector<Image>& cpuImages)
@@ -1742,7 +1745,7 @@ std::vector<uint32_t> Renderer::uploadImages(const std::vector<Image>& cpuImages
 	std::vector<GPUBuffer> stagingBuffers;
 	stagingBuffers.reserve(cpuImages.size());
 
-	std::vector<uint32_t> imageIDs(cpuImages.size(), fallbackImageID);
+	std::vector<uint32_t> imageIDs(cpuImages.size(), FallbackIndex);
 
 	// Upload images to GPU textures
 	for (uint32_t i = 0; i < cpuImages.size(); ++i)
@@ -1774,7 +1777,7 @@ std::vector<uint32_t> Renderer::uploadSamplers(const std::vector<ModelSampler>& 
 {
 	ZoneScopedN("Load Samplers");
 
-	std::vector<uint32_t> samplerIDs(modelSamplers.size());
+	std::vector<uint32_t> samplerIDs(modelSamplers.size(), FallbackIndex);
 
 	for (uint32_t i = 0; i < modelSamplers.size(); ++i)
 	{
@@ -1818,12 +1821,11 @@ std::vector<uint32_t> Renderer::uploadSamplers(const std::vector<ModelSampler>& 
 		if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
 		{
 			std::cerr << "Failed to create texture sampler." << std::endl;
-			samplerIDs[i] = textures[0].samplerID;
 		}
 		else
 		{
 			samplers.push_back(sampler);
-			samplerIDs[i] = static_cast<uint32_t>(samplers.size());
+			samplerIDs[i] = static_cast<uint32_t>(samplers.size() - 1);
 		}
 	}
 
@@ -1834,7 +1836,7 @@ std::vector<uint32_t> Renderer::uploadSamplers(const std::vector<ModelSampler>& 
 uint32_t Renderer::addBuffer(const GPUBuffer& buffer)
 {
 	buffers.push_back(buffer);
-	return static_cast<uint32_t>(buffers.size());
+	return static_cast<uint32_t>(buffers.size() - 1);
 }
 
 void Renderer::createDescriptorSets()
@@ -1911,8 +1913,8 @@ void Renderer::updateTextureDescriptors()
 	for (const Texture& texture : textures)
 	{
 		imageDescriptors.push_back(
-			{.sampler = samplers[texture.samplerID - 1],
-			 .imageView = images[texture.imageID - 1].imageView,
+			{.sampler = samplers[texture.samplerID],
+			 .imageView = images[texture.imageID].imageView,
 			 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
 		);
 	}

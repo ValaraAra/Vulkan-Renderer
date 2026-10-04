@@ -166,10 +166,9 @@ class Renderer
 	std::vector<Mesh> meshes;
 
 	// GPU resources
-	uint32_t fallbackImageID = 0;
-	uint32_t vertexBufferID = 0;
-	uint32_t indexBufferID = 0;
-	uint32_t materialBufferID = 0;
+	uint32_t vertexBufferID = InvalidIndex;
+	uint32_t indexBufferID = InvalidIndex;
+	uint32_t materialBufferID = InvalidIndex;
 	std::vector<GPUImage> images;
 	std::vector<VkSampler> samplers;
 	std::vector<Texture> textures;
@@ -183,8 +182,8 @@ class Renderer
 
 	// Scene data
 	Scene scene;
-	uint32_t rootNodeID = 0;
-	uint32_t lastRootNodeID = 0;
+	uint32_t rootNodeID = InvalidIndex;
+	uint32_t lastRootNodeID = InvalidIndex;
 	std::vector<std::pair<Node*, glm::mat4>> nodeRenderStack;
 	std::vector<VkDrawIndexedIndirectCommand> stagedDrawCommands;
 	std::vector<RenderItem> stagedRenderItems;

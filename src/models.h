@@ -8,8 +8,6 @@
 #include <tiny_gltf_v3.h> // Replace with fastgltf eventually?
 #include <vector>
 
-static constexpr uint32_t InvalidIndex = UINT32_MAX;
-
 struct ModelSampler
 {
 	int magFilter;
@@ -20,8 +18,8 @@ struct ModelSampler
 
 struct ModelTexture
 {
-	uint32_t image = 0;
-	uint32_t sampler = 0;
+	uint32_t image = InvalidIndex;
+	uint32_t sampler = InvalidIndex;
 };
 
 struct ModelNode

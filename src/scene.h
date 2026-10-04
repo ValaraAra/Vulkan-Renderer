@@ -1,7 +1,11 @@
 #pragma once
 
+#include "resources.h"
+
+#include <cassert>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <vector>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
@@ -9,10 +13,10 @@
 class Node
 {
   public:
-	uint32_t meshID = 0;
-	uint32_t parentID = 0;
-	uint32_t nextSiblingID = 0;
-	uint32_t firstChildID = 0;
+	uint32_t meshID = InvalidIndex;
+	uint32_t parentID = InvalidIndex;
+	uint32_t nextSiblingID = InvalidIndex;
+	uint32_t firstChildID = InvalidIndex;
 
 	glm::vec3 getTranslation() const
 	{ return translation; }
@@ -43,9 +47,9 @@ class Node
 		// Recalculate local matrix transform if dirty
 		if (dirty)
 		{
-			glm::mat4 matrixTranslate = glm::translate(glm::mat4(1), translation);
+			glm::mat4 matrixTranslate = glm::translate(glm::mat4(1.0f), translation);
 			glm::mat4 matrixRotate = glm::mat4_cast(rotation);
-			glm::mat4 matrixScale = glm::scale(glm::mat4(1), scale);
+			glm::mat4 matrixScale = glm::scale(glm::mat4(1.0f), scale);
 			transform = matrixTranslate * matrixRotate * matrixScale;
 			dirty = false;
 		}
@@ -63,10 +67,10 @@ class Node
 	}
 
   private:
-	glm::vec3 translation = glm::vec3(0);
-	glm::vec3 scale = glm::vec3(1);
-	glm::quat rotation = glm::quat(1, 0, 0, 0);
-	glm::mat4 transform = glm::mat4(1);
+	glm::vec3 translation = glm::vec3(0.0f);
+	glm::vec3 scale = glm::vec3(1.0f);
+	glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+	glm::mat4 transform = glm::mat4(1.0f);
 
 	bool dirty = true;
 };
@@ -80,16 +84,13 @@ class Scene
 	std::pair<Node&, uint32_t> createNode()
 	{
 		nodes.push_back(Node{});
-
-		uint32_t nodeID = static_cast<uint32_t>(nodes.size());
-		return {nodes[nodeID - 1], nodeID};
+		return {nodes.back(), static_cast<uint32_t>(nodes.size() - 1)};
 	}
 
 	Node& getNode(uint32_t nodeID)
 	{
-		assert(nodeID > 0 && "Invalid node ID!");
-
-		return nodes[nodeID - 1];
+		assert(nodeID < nodes.size() && "Invalid node ID!");
+		return nodes[nodeID];
 	}
 
 	size_t size() const
