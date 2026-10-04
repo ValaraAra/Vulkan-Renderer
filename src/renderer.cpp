@@ -61,6 +61,12 @@ void Renderer::initialize(SDL_Window* sdlWindow)
 // Really only set up for a single model currently
 void Renderer::loadModel(const Model& model)
 {
+	// Enforce single model only (for now)
+	if (vertexBufferID != InvalidIndex) { throw RenderError("Multiple models not supported!"); }
+
+	// Enforce texture limit
+	if (textures.size() + model.textures.size() > MaxTextures) { throw RenderError("Model overruns texture limit!"); }
+
 	// Upload images and samplers
 	std::vector<uint32_t> modelImageIDs = uploadImages(model.images);
 	std::vector<uint32_t> modelSamplerIDs = uploadSamplers(model.samplers);
