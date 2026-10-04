@@ -1,7 +1,10 @@
 #include "application.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
+#include <stb_image.h>
+#include <stdexcept>
 #include <tracy/Tracy.hpp>
 
 bool Application::initialize()
@@ -35,9 +38,18 @@ bool Application::initialize()
 	// Load scene
 	try
 	{
-		renderer.loadData(std::filesystem::path{ASSET_DIR} / "models/gltf/sponza-unity-remaster/scene.gltf");
+		const std::filesystem::path path = std::filesystem::path{ASSET_DIR} / "models/gltf/sponza-unity-remaster/scene.gltf";
+
+		Model model = modelLoader.loadGLTF(path);
+		renderer.loadModel(model);
+
+		// Free model image mem (give image a destructor at some point, not really safe currently)
+		for (Image& image : model.images)
+		{
+			stbi_image_free(image.data);
+		}
 	}
-	catch (const RenderError& error)
+	catch (const std::runtime_error& error)
 	{
 		showError("Scene loading failed!\n\n" + std::string(error.what()));
 		return false;

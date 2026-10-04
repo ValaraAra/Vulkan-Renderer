@@ -1,5 +1,6 @@
 #pragma once
 
+#include "models.h"
 #include "resources.h"
 #include "scene.h"
 
@@ -7,12 +8,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <glm/glm.hpp>
 #include <shaderc/shaderc.hpp>
 #include <stdexcept>
 #include <string>
-#include <tiny_gltf_v3.h> // Replace with fastgltf eventually?
 #include <utility>
 #include <vector>
 #include <vma/vk_mem_alloc.h> // Would be best to forward declare instead, but fine for now
@@ -70,7 +69,7 @@ class Renderer
 {
   public:
 	void initialize(SDL_Window* window);
-	void loadData(const std::filesystem::path& path);
+	void loadModel(const Model& model);
 	void render(const glm::mat4& viewProjectionMatrix);
 	void shutdown();
 
@@ -103,27 +102,11 @@ class Renderer
 	std::pair<uint32_t, GPUBuffer>
 	createImage(VkCommandBuffer commandBuffer, unsigned char* imageData, uint32_t width, uint32_t height, int channels);
 	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage);
-	void mapCopyBufferData(const GPUBuffer& buffer, size_t bufferOffset, void* data, size_t byteSize);
+	void mapCopyBufferData(const GPUBuffer& buffer, size_t bufferOffset, const void* data, size_t byteSize);
 	void createFallbackTexture();
 
-	void loadGLTF(const std::filesystem::path& filepath);
-
-	std::vector<Image> loadImages(const tg3_model& model, const std::filesystem::path& imageDir);
 	std::vector<uint32_t> uploadImages(const std::vector<Image>& cpuImages);
-
-	std::vector<uint32_t> loadSamplers(const tg3_model& model);
-	std::vector<uint32_t>
-	loadTextures(const tg3_model& model, const std::vector<uint32_t>& imageIDs, const std::vector<uint32_t>& samplerIDs);
-	std::vector<uint32_t> loadMaterials(const tg3_model& model, const std::vector<uint32_t>& textureIDs);
-	std::vector<uint32_t> loadMeshes(const tg3_model& model, const std::vector<uint32_t>& materialIDs);
-
-	uint32_t importNode(
-		const tg3_model& model,
-		int32_t nodeIndex,
-		uint32_t parentID,
-		uint32_t previousSiblingID,
-		std::vector<uint32_t>& meshIDs
-	);
+	std::vector<uint32_t> uploadSamplers(const std::vector<ModelSampler>& modelSamplers);
 
 	uint32_t addBuffer(const GPUBuffer& buffer);
 
@@ -139,12 +122,6 @@ class Renderer
 	constexpr static size_t InitialDrawBufferSize{1024};
 	constexpr static VkFormat swapchainFormat{VK_FORMAT_B8G8R8A8_SRGB};
 	constexpr static VkFormat depthFormat{VK_FORMAT_D32_SFLOAT};
-
-	// Vertex buffer and index buffer budgets in bytes
-	constexpr static size_t vertexBufferBytes{64 * 1024 * 1024};
-	constexpr static size_t indexBufferBytes{32 * 1024 * 1024};
-	constexpr static size_t totalVertices{vertexBufferBytes / sizeof(Vertex)};
-	constexpr static size_t totalIndices{indexBufferBytes / sizeof(uint32_t)};
 
 	SDL_Window* window{nullptr};
 
@@ -186,11 +163,7 @@ class Renderer
 	VkCommandPool transientCommandPool{VK_NULL_HANDLE};
 
 	// CPU resources
-	std::vector<Mesh> sceneMeshes;
-	std::vector<Vertex> sceneVertices = std::vector<Vertex>(totalVertices);
-	std::vector<uint32_t> sceneIndices = std::vector<uint32_t>(totalIndices);
-	size_t vertexOffset = 0;
-	size_t indexOffset = 0;
+	std::vector<Mesh> meshes;
 
 	// GPU resources
 	uint32_t fallbackImageID = 0;

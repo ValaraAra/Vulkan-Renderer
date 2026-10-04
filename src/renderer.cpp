@@ -1,14 +1,17 @@
 #include "renderer.h"
 
+#include "models.h"
+#include "resources.h"
 #include "utility.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
-#include <stb_image.h>
+#include <tiny_gltf_v3.h> // Replace with fastgltf eventually?
 #include <tracy/Tracy.hpp>
 #include <unordered_map>
 
@@ -57,10 +60,53 @@ void Renderer::initialize(SDL_Window* sdlWindow)
 	createFallbackTexture();
 }
 
-// Move asset loading out
-void Renderer::loadData(const std::filesystem::path& path)
+// Really only set up for a single model currently
+void Renderer::loadModel(const Model& model)
 {
-	loadGLTF(path);
+	// Upload images and samplers
+	std::vector<uint32_t> modelImageIDs = uploadImages(model.images);
+	std::vector<uint32_t> modelSamplerIDs = uploadSamplers(model.samplers);
+
+	// Remapping base counts
+	const uint32_t texturesBase = static_cast<uint32_t>(textures.size());
+	const uint32_t materialsBase = static_cast<uint32_t>(materials.size());
+	const uint32_t meshesBase = static_cast<uint32_t>(meshes.size());
+	const uint32_t nodesBase = static_cast<uint32_t>(scene.size());
+
+	// Remap textures
+	for (const ModelTexture& modelTexture : model.textures)
+	{
+		textures.push_back({
+			.imageID = modelImageIDs[modelTexture.image],
+			.samplerID =
+				modelTexture.sampler == InvalidIndex ? textures[0].samplerID : modelSamplerIDs[modelTexture.sampler],
+		});
+	}
+
+	// Remap materials
+	for (const Material& modelMaterial : model.materials)
+	{
+		materials.push_back({
+			.baseColor = modelMaterial.baseColor,
+			.textureID = modelMaterial.textureID == InvalidIndex ? 0 : modelMaterial.textureID + texturesBase + 1,
+		});
+	}
+
+	// Remap meshes
+	for (const Mesh& modelMesh : model.meshes)
+	{
+		Mesh mesh = modelMesh;
+		for (SubMesh& subMesh : mesh.subMeshes)
+		{
+			subMesh.materialID = subMesh.materialID == InvalidIndex ? 1 : subMesh.materialID + materialsBase + 1;
+		}
+
+		meshes.push_back(std::move(mesh));
+	}
+
+	// Vertex buffer and index buffer size in bytes
+	const size_t vertexBufferBytes = model.vertices.size() * sizeof(Vertex);
+	const size_t indexBufferBytes = model.indices.size() * sizeof(uint32_t);
 
 	// Staging buffers
 	GPUBuffer vertexStagingBuffer =
@@ -81,7 +127,7 @@ void Renderer::loadData(const std::filesystem::path& path)
 	if (!vertexBuffer.buffer) { throw RenderError("Failed to create vertex buffer."); }
 
 	vertexBufferID = addBuffer(vertexBuffer);
-	mapCopyBufferData(vertexStagingBuffer, 0, sceneVertices.data(), vertexBufferBytes);
+	mapCopyBufferData(vertexStagingBuffer, 0, model.vertices.data(), vertexBufferBytes);
 
 	GPUBuffer indexBuffer = createBuffer(
 		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferBytes, false, VMA_MEMORY_USAGE_AUTO
@@ -89,7 +135,7 @@ void Renderer::loadData(const std::filesystem::path& path)
 	if (!indexBuffer.buffer) { throw RenderError("Failed to create index buffer."); }
 
 	indexBufferID = addBuffer(indexBuffer);
-	mapCopyBufferData(indexStagingBuffer, 0, sceneIndices.data(), indexBufferBytes);
+	mapCopyBufferData(indexStagingBuffer, 0, model.indices.data(), indexBufferBytes);
 
 	// Copy staged data to VRAM
 	VkCommandBuffer geometryCommandBuffer = startTransientCommandBuffer();
@@ -121,6 +167,30 @@ void Renderer::loadData(const std::filesystem::path& path)
 
 	materialBufferID = addBuffer(materialBuffer);
 	mapCopyBufferData(materialBuffer, 0, materials.data(), materialDataBytes);
+
+	// Remap nodes / add to scene
+	for (const ModelNode& modelNode : model.nodes)
+	{
+		auto [node, nodeID] = scene.createNode();
+		node.setTransform(modelNode.transform);
+		node.meshID = modelNode.mesh == InvalidIndex ? 0 : modelNode.mesh + meshesBase + 1;
+		node.parentID = modelNode.parent == InvalidIndex ? 0 : modelNode.parent + nodesBase + 1;
+		node.firstChildID = modelNode.firstChild == InvalidIndex ? 0 : modelNode.firstChild + nodesBase + 1;
+		node.nextSiblingID = modelNode.nextSibling == InvalidIndex ? 0 : modelNode.nextSibling + nodesBase + 1;
+	}
+
+	for (uint32_t rootIndex : model.rootNodes)
+	{
+		uint32_t nodeID = rootIndex + nodesBase + 1;
+
+		if (!rootNodeID) { rootNodeID = nodeID; }
+		else
+		{
+			scene.getNode(lastRootNodeID).nextSiblingID = nodeID;
+		}
+
+		lastRootNodeID = nodeID;
+	}
 }
 
 void Renderer::render(const glm::mat4& viewProjectionMatrix)
@@ -210,7 +280,7 @@ void Renderer::render(const glm::mat4& viewProjectionMatrix)
 			// Draw the nodes mesh! (if it has one)
 			if (node->meshID)
 			{
-				Mesh& mesh = sceneMeshes[node->meshID - 1];
+				Mesh& mesh = meshes[node->meshID - 1];
 
 				for (SubMesh& subMesh : mesh.subMeshes)
 				{
@@ -1600,7 +1670,7 @@ GPUBuffer Renderer::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool
 	return gpuBuffer;
 }
 
-void Renderer::mapCopyBufferData(const GPUBuffer& buffer, size_t bufferOffset, void* data, size_t byteSize)
+void Renderer::mapCopyBufferData(const GPUBuffer& buffer, size_t bufferOffset, const void* data, size_t byteSize)
 {
 	ZoneScopedN("Map Copy Buffer Data");
 
@@ -1652,108 +1722,15 @@ void Renderer::createFallbackTexture()
 		throw RenderError("Failed to create texture sampler.");
 	}
 
-	// Store sampler, get ID, store texture
+	// Store sampler
 	samplers.push_back(sampler);
 	uint32_t fallbackSamplerID = static_cast<uint32_t>(samplers.size());
+
+	// Store texture
 	textures.push_back(Texture{.imageID = fallbackImageID, .samplerID = fallbackSamplerID});
-}
 
-void Renderer::loadGLTF(const std::filesystem::path& filepath)
-{
-	ZoneScopedN("Load GLTF");
-
-	if (!std::filesystem::exists(filepath)) { throw RenderError("GLTF file does not exists!"); }
-
-	const std::string filepathString = filepath.string();
-	std::cout << std::format("Loading GLTF: {}", filepathString) << std::endl;
-
-	// Load and parse GLTF
-	tg3_model model;
-	tg3_parse_options modelOptions;
-	tg3_error_stack modelErrors;
-
-	tg3_parse_options_init(&modelOptions);
-	tg3_error_stack_init(&modelErrors);
-	tg3_error_code parseResult = tg3_parse_file(
-		&model, &modelErrors, filepathString.c_str(), static_cast<uint32_t>(filepathString.size()), &modelOptions
-	);
-
-	// Handle parse errors
-	if (parseResult != TG3_OK)
-	{
-		std::cerr << "GLTF parsing failed, errors found:" << std::endl;
-		for (uint32_t i = 0; i < modelErrors.count; ++i)
-		{
-			std::cerr << modelErrors.entries[i].message << std::endl;
-		}
-		tg3_error_stack_free(&modelErrors);
-		throw RenderError("GLTF parsing failed!");
-	}
-	tg3_error_stack_free(&modelErrors);
-
-	// Load images
-	std::filesystem::path modelDirectory = filepath.parent_path();
-	std::vector<Image> modelImages = loadImages(model, modelDirectory);
-	std::vector<uint32_t> modelImageIDs = uploadImages(modelImages);
-
-	// Free stb image mem after VRAM upload
-	for (const Image& image : modelImages)
-	{
-		stbi_image_free(image.data);
-	}
-
-	// Load samplers, textures, mats, and meshes
-	std::vector<uint32_t> modelSamplerIDs = loadSamplers(model);
-	std::vector<uint32_t> modelTextureIDs = loadTextures(model, modelImageIDs, modelSamplerIDs);
-	std::vector<uint32_t> modelMaterialIDs = loadMaterials(model, modelTextureIDs);
-	std::vector<uint32_t> modelMeshIDs = loadMeshes(model, modelMaterialIDs);
-
-	// Import scene
-	const tg3_scene* tg3Scene = &model.scenes[model.default_scene != -1 ? model.default_scene : 0];
-
-	// Iterate root nodes, importing each node and its children
-	for (uint32_t i = 0; i < tg3Scene->nodes_count; ++i)
-	{
-		uint32_t nodeID = importNode(model, tg3Scene->nodes[i], 0, lastRootNodeID, modelMeshIDs);
-
-		// First root node
-		if (!rootNodeID)
-		{
-			rootNodeID = nodeID;
-			lastRootNodeID = nodeID;
-		}
-		else
-		{
-			lastRootNodeID = nodeID;
-		}
-	}
-
-	std::cout << std::format("Loaded {} nodes.", scene.size()) << std::endl;
-
-	// Cleanup
-	tg3_model_free(&model);
-	std::cout << "GLTF loaded successfully!" << std::endl;
-}
-
-std::vector<Image> Renderer::loadImages(const tg3_model& model, const std::filesystem::path& imageDir)
-{
-	ZoneScopedN("Load Images");
-
-	std::vector<Image> loadedImages(model.images_count);
-
-	for (uint32_t i = 0; i < model.images_count; ++i)
-	{
-		Image& image = loadedImages[i];
-		std::filesystem::path imagePath = imageDir / model.images[i].uri.data;
-
-		std::cout << std::format("Loading image {}/{}: {}", i + 1, model.images_count, model.images[i].uri.data)
-				  << std::endl;
-
-		image.data = stbi_load(imagePath.string().c_str(), &image.width, &image.height, &image.channels, 4);
-		if (!image.data) { throw RenderError("Failed to load image: " + imagePath.string()); }
-	}
-
-	return loadedImages;
+	// Store material
+	materials.push_back(Material{.baseColor = glm::vec4(1.0f), .textureID = 0});
 }
 
 std::vector<uint32_t> Renderer::uploadImages(const std::vector<Image>& cpuImages)
@@ -1793,15 +1770,15 @@ std::vector<uint32_t> Renderer::uploadImages(const std::vector<Image>& cpuImages
 	return imageIDs;
 }
 
-std::vector<uint32_t> Renderer::loadSamplers(const tg3_model& model)
+std::vector<uint32_t> Renderer::uploadSamplers(const std::vector<ModelSampler>& modelSamplers)
 {
 	ZoneScopedN("Load Samplers");
 
-	std::vector<uint32_t> samplerIDs(model.samplers_count);
+	std::vector<uint32_t> samplerIDs(modelSamplers.size());
 
-	for (uint32_t i = 0; i < model.samplers_count; ++i)
+	for (uint32_t i = 0; i < modelSamplers.size(); ++i)
 	{
-		const tg3_sampler& tg3Sampler = model.samplers[i];
+		const ModelSampler& modelSampler = modelSamplers[i];
 
 		static const std::unordered_map<int32_t, std::tuple<VkFilter, VkSamplerMipmapMode, float>> filterMap{
 			{TG3_TEXTURE_FILTER_NEAREST, {VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, 0.25f}},
@@ -1823,16 +1800,18 @@ std::vector<uint32_t> Renderer::loadSamplers(const tg3_model& model)
 
 		VkSamplerCreateInfo samplerInfo{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-			.magFilter = (tg3Sampler.mag_filter == -1) ? VK_FILTER_LINEAR : std::get<0>(filterMap.at(tg3Sampler.mag_filter)),
-			.minFilter = (tg3Sampler.min_filter == -1) ? VK_FILTER_LINEAR : std::get<0>(filterMap.at(tg3Sampler.min_filter)),
-			.mipmapMode = (tg3Sampler.min_filter == -1) ? VK_SAMPLER_MIPMAP_MODE_LINEAR
-														: std::get<1>(filterMap.at(tg3Sampler.min_filter)),
-			.addressModeU = (tg3Sampler.wrap_s == -1) ? VK_SAMPLER_ADDRESS_MODE_REPEAT : wrapMap.at(tg3Sampler.wrap_s),
-			.addressModeV = (tg3Sampler.wrap_t == -1) ? VK_SAMPLER_ADDRESS_MODE_REPEAT : wrapMap.at(tg3Sampler.wrap_t),
+			.magFilter =
+				(modelSampler.magFilter == -1) ? VK_FILTER_LINEAR : std::get<0>(filterMap.at(modelSampler.magFilter)),
+			.minFilter =
+				(modelSampler.minFilter == -1) ? VK_FILTER_LINEAR : std::get<0>(filterMap.at(modelSampler.minFilter)),
+			.mipmapMode = (modelSampler.minFilter == -1) ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+														 : std::get<1>(filterMap.at(modelSampler.minFilter)),
+			.addressModeU = (modelSampler.wrapU == -1) ? VK_SAMPLER_ADDRESS_MODE_REPEAT : wrapMap.at(modelSampler.wrapU),
+			.addressModeV = (modelSampler.wrapV == -1) ? VK_SAMPLER_ADDRESS_MODE_REPEAT : wrapMap.at(modelSampler.wrapV),
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.compareEnable = VK_FALSE,
 			.minLod = 0.0f,
-			.maxLod = (tg3Sampler.min_filter == -1) ? VK_LOD_CLAMP_NONE : std::get<2>(filterMap.at(tg3Sampler.min_filter)),
+			.maxLod = (modelSampler.minFilter == -1) ? VK_LOD_CLAMP_NONE : std::get<2>(filterMap.at(modelSampler.minFilter)),
 		};
 
 		VkSampler sampler = VK_NULL_HANDLE;
@@ -1850,269 +1829,6 @@ std::vector<uint32_t> Renderer::loadSamplers(const tg3_model& model)
 
 	std::cout << std::format("Loaded {} samplers.", samplerIDs.size()) << std::endl;
 	return samplerIDs;
-}
-
-std::vector<uint32_t> Renderer::loadTextures(
-	const tg3_model& model, const std::vector<uint32_t>& imageIDs, const std::vector<uint32_t>& samplerIDs
-)
-{
-	ZoneScopedN("Load Textures");
-
-	assert(textures.size() + model.textures_count <= MaxTextures && "Exceeded max texture count!");
-
-	std::vector<uint32_t> textureIDs(model.textures_count);
-	for (uint32_t i = 0; i < model.textures_count; ++i)
-	{
-		const tg3_texture& tg3Texture = model.textures[i];
-		textures.push_back(
-			Texture{
-				.imageID = imageIDs[tg3Texture.source],
-				.samplerID = tg3Texture.sampler == -1 ? textures[0].samplerID : samplerIDs[tg3Texture.sampler],
-			}
-		);
-		textureIDs[i] = static_cast<uint32_t>(textures.size());
-	}
-
-	std::cout << std::format("Loaded {} textures.", textureIDs.size()) << std::endl;
-	return textureIDs;
-}
-
-std::vector<uint32_t> Renderer::loadMaterials(const tg3_model& model, const std::vector<uint32_t>& textureIDs)
-{
-	ZoneScopedN("Load Materials");
-
-	std::vector<uint32_t> materialIDs(model.materials_count);
-	for (uint32_t i = 0; i < model.materials_count; ++i)
-	{
-		const tg3_material& tg3Material = model.materials[i];
-		materials.push_back(
-			Material{
-				.baseColor = glm::vec4(
-					tg3Material.pbr_metallic_roughness.base_color_factor[0],
-					tg3Material.pbr_metallic_roughness.base_color_factor[1],
-					tg3Material.pbr_metallic_roughness.base_color_factor[2],
-					tg3Material.pbr_metallic_roughness.base_color_factor[3]
-				),
-				.textureID = tg3Material.pbr_metallic_roughness.base_color_texture.index != -1
-								 ? textureIDs[tg3Material.pbr_metallic_roughness.base_color_texture.index]
-								 : 0,
-			}
-		);
-		materialIDs[i] = static_cast<uint32_t>(materials.size());
-	}
-
-	std::cout << std::format("Loaded {} materials.", materialIDs.size()) << std::endl;
-	return materialIDs;
-}
-
-std::vector<uint32_t> Renderer::loadMeshes(const tg3_model& model, const std::vector<uint32_t>& materialIDs)
-{
-	ZoneScopedN("Load Meshes");
-
-	std::vector<uint32_t> meshIDs(model.meshes_count);
-
-	for (uint32_t i = 0; i < model.meshes_count; ++i)
-	{
-		Mesh mesh;
-		const tg3_mesh* tg3Mesh = &model.meshes[i];
-
-		// Copy name
-		mesh.name = tg3Mesh->name.data != nullptr ? tg3Mesh->name.data : "No Name";
-
-		// Attribute data copy lambda
-		auto writeAttribute = [this, &model]<typename T>(T Vertex::* member, const tg3_str_int_pair* attr) {
-			const tg3_accessor* accessor = &model.accessors[attr->value];
-			const tg3_buffer_view* bufferView = &model.buffer_views[accessor->buffer_view];
-			const tg3_buffer* buffer = &model.buffers[bufferView->buffer];
-
-			size_t componentCount;
-			switch (accessor->type)
-			{
-				case TG3_TYPE_VEC2: componentCount = 2; break;
-				case TG3_TYPE_VEC3: componentCount = 3; break;
-				case TG3_TYPE_VEC4: componentCount = 4; break;
-				default: throw RenderError("Unsupported mesh vertex attribute type!");
-			}
-
-			size_t componentSize;
-			switch (accessor->component_type)
-			{
-				case TG3_COMPONENT_TYPE_FLOAT: componentSize = sizeof(float); break;
-				default: throw RenderError("Unsupported mesh vertex attribute component type!");
-			}
-
-			const size_t bufferOffset = bufferView->byte_offset + accessor->byte_offset;
-			const size_t elementSize = componentCount * componentSize;
-			const size_t stride = bufferView->byte_stride != 0 ? bufferView->byte_stride : elementSize;
-
-			for (uint64_t j = 0; j < accessor->count; ++j)
-			{
-				const size_t elementOffset = bufferOffset + j * stride;
-				const float* data = reinterpret_cast<const float*>(buffer->data.data + elementOffset);
-
-				if constexpr (std::is_same<T, glm::vec3>())
-				{
-					sceneVertices[vertexOffset + j].*member = glm::vec3(data[0], data[1], data[2]);
-				}
-				else if constexpr (std::is_same<T, glm::vec2>())
-				{
-					sceneVertices[vertexOffset + j].*member = glm::vec2(data[0], data[1]);
-				}
-			}
-		};
-
-		// Copy vertex data
-		mesh.subMeshes.resize(tg3Mesh->primitives_count);
-		for (uint32_t j = 0; j < tg3Mesh->primitives_count; ++j)
-		{
-			const tg3_primitive* primitive = &tg3Mesh->primitives[j];
-			mesh.subMeshes[j].materialID = materialIDs[primitive->material];
-			mesh.subMeshes[j].vertexStart = vertexOffset;
-
-			for (uint32_t k = 0; k < primitive->attributes_count; ++k)
-			{
-				const tg3_str_int_pair* attr = &primitive->attributes[k];
-				if (strcmp(attr->key.data, "POSITION") == 0)
-				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-
-					assert(accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-					assert(vertexOffset + accessor->count <= sceneVertices.size() && "Not enough space to load vertices");
-
-					mesh.subMeshes[j].vertexCount = accessor->count;
-					writeAttribute(&Vertex::position, attr);
-				}
-				else if (strcmp(attr->key.data, "NORMAL") == 0)
-				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-					assert(accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-					writeAttribute(&Vertex::normal, attr);
-				}
-				else if (strcmp(attr->key.data, "COLOR_0") == 0)
-				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-
-					assert(accessor->type == TG3_TYPE_VEC3 || accessor->type == TG3_TYPE_VEC4);
-					assert(accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-
-					writeAttribute(&Vertex::color, attr);
-				}
-				else if (strcmp(attr->key.data, "TEXCOORD_0") == 0)
-				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-
-					assert(accessor->type == TG3_TYPE_VEC2 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-
-					writeAttribute(&Vertex::uv, attr);
-				}
-			}
-			vertexOffset += mesh.subMeshes[j].vertexCount;
-
-			// Copy index data
-			if (primitive->indices != -1)
-			{
-				const tg3_accessor* accessor = &model.accessors[primitive->indices];
-				const tg3_buffer_view* bufferView = &model.buffer_views[accessor->buffer_view];
-				const tg3_buffer* buffer = &model.buffers[bufferView->buffer];
-
-				assert(indexOffset + accessor->count <= sceneIndices.size() && "Not enough space for indices");
-
-				mesh.subMeshes[j].indexStart = indexOffset;
-				mesh.subMeshes[j].indexCount = accessor->count;
-
-				if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_INT)
-				{
-					const uint32_t* buffData = reinterpret_cast<const uint32_t*>(
-						buffer->data.data + bufferView->byte_offset + accessor->byte_offset
-					);
-					memcpy(&sceneIndices[indexOffset], buffData, accessor->count * sizeof(uint32_t));
-				}
-				else if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_SHORT)
-				{
-					const uint16_t* buffData = reinterpret_cast<const uint16_t*>(
-						buffer->data.data + bufferView->byte_offset + accessor->byte_offset
-					);
-					for (uint64_t k = 0; k < accessor->count; ++k)
-					{
-						sceneIndices[indexOffset + k] = static_cast<uint32_t>(buffData[k]);
-					}
-				}
-
-				indexOffset += mesh.subMeshes[j].indexCount;
-			}
-		}
-
-		sceneMeshes.push_back(std::move(mesh));
-		meshIDs[i] = static_cast<uint32_t>(sceneMeshes.size());
-	}
-
-	std::cout << std::format("Loaded {} meshes.", meshIDs.size()) << std::endl;
-	return meshIDs;
-}
-
-uint32_t Renderer::importNode(
-	const tg3_model& model, int32_t nodeIndex, uint32_t parentID, uint32_t previousSiblingID, std::vector<uint32_t>& meshIDs
-)
-{
-	const tg3_node& tg3Node = model.nodes[nodeIndex];
-
-	// Create new node and set parent ID
-	auto [node, nodeID] = scene.createNode();
-	node.parentID = parentID;
-
-	// Process transform
-	if (tg3Node.has_matrix)
-	{
-		glm::mat4 transform(1);
-		float* transformPointer = glm::value_ptr(transform);
-
-		for (int i = 0; i < 16; ++i)
-		{
-			transformPointer[i] = static_cast<float>(tg3Node.matrix[i]);
-		}
-
-		node.setTransform(transform);
-	}
-	else
-	{
-		glm::vec3 translation(
-			static_cast<float>(tg3Node.translation[0]),
-			static_cast<float>(tg3Node.translation[1]),
-			static_cast<float>(tg3Node.translation[2])
-		);
-		glm::quat rotation(
-			static_cast<float>(tg3Node.rotation[3]),
-			static_cast<float>(tg3Node.rotation[0]),
-			static_cast<float>(tg3Node.rotation[1]),
-			static_cast<float>(tg3Node.rotation[2])
-		);
-		glm::vec3 scale(
-			static_cast<float>(tg3Node.scale[0]), static_cast<float>(tg3Node.scale[1]), static_cast<float>(tg3Node.scale[2])
-		);
-
-		node.setTranslation(translation);
-		node.setRotation(rotation);
-		node.setScale(scale);
-	}
-
-	// Grab meshID if tg3node has valid mesh index
-	if (tg3Node.mesh != -1) { node.meshID = meshIDs[tg3Node.mesh]; }
-
-	// Link sibling nodes together
-	if (previousSiblingID) { scene.getNode(previousSiblingID).nextSiblingID = nodeID; }
-
-	// Iterate child nodes and recursively import
-	uint32_t lastChildID = 0;
-	for (uint32_t i = 0; i < tg3Node.children_count; ++i)
-	{
-		int32_t childIndex = tg3Node.children[i];
-		lastChildID = importNode(model, childIndex, nodeID, lastChildID, meshIDs);
-
-		// Set parent's first child ID
-		if (!node.firstChildID) { node.firstChildID = lastChildID; }
-	}
-
-	return nodeID;
 }
 
 uint32_t Renderer::addBuffer(const GPUBuffer& buffer)

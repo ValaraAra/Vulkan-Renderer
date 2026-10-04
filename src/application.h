@@ -1,5 +1,6 @@
 #pragma once
 #include "camera.h"
+#include "models.h"
 #include "renderer.h"
 
 #include <SDL3/SDL.h>
@@ -24,6 +25,8 @@ class Application
 	SDL_Window* window = nullptr;
 	Camera camera;
 	Renderer renderer;
+
+	ModelLoader modelLoader;
 
 	bool running = false;
 };
