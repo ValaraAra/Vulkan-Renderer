@@ -64,28 +64,32 @@ Model ModelLoader::loadGLTF(const std::filesystem::path& filepath)
 	std::cout << std::format("Loading GLTF: {}", filepathString) << std::endl;
 
 	// Load and parse GLTF
-	tg3_model model;
-	tg3_parse_options modelOptions;
-	tg3_error_stack modelErrors;
+	tinygltf3::Model gltfModel;
+	tinygltf3::ErrorStack modelErrors;
 
+	tg3_parse_options modelOptions;
 	tg3_parse_options_init(&modelOptions);
-	tg3_error_stack_init(&modelErrors);
+
 	tg3_error_code parseResult = tg3_parse_file(
-		&model, &modelErrors, filepathString.c_str(), static_cast<uint32_t>(filepathString.size()), &modelOptions
+		gltfModel.get(),
+		modelErrors.get(),
+		filepathString.c_str(),
+		static_cast<uint32_t>(filepathString.size()),
+		&modelOptions
 	);
 
 	// Handle parse errors
 	if (parseResult != TG3_OK)
 	{
 		std::cerr << "GLTF parsing failed, errors found:" << std::endl;
-		for (uint32_t i = 0; i < modelErrors.count; ++i)
+		for (uint32_t i = 0; i < modelErrors.count(); ++i)
 		{
-			std::cerr << modelErrors.entries[i].message << std::endl;
+			std::cerr << modelErrors.entry(i)->message << std::endl;
 		}
-		tg3_error_stack_free(&modelErrors);
 		throw ModelError("GLTF parsing failed!");
 	}
-	tg3_error_stack_free(&modelErrors);
+
+	const tg3_model& model = *gltfModel.get();
 
 	// Loaded model data
 	Model loadedModel;
@@ -98,10 +102,7 @@ Model ModelLoader::loadGLTF(const std::filesystem::path& filepath)
 	// Process nodes
 	importNodes(model, loadedModel);
 
-	// Cleanup
-	tg3_model_free(&model);
 	std::cout << "GLTF loaded successfully!" << std::endl;
-
 	return loadedModel;
 }
 
