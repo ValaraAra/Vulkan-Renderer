@@ -1,14 +1,58 @@
 #include "models.h"
 
-#include "tiny_gltf_v3.h"
-
-#include <cassert>
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <numeric>
+#include <span>
 #include <stb_image.h>
+#include <string_view>
 #include <tracy/Tracy.hpp>
+
+namespace
+{
+bool supportedAccessorType(std::string_view key, const tg3_accessor& accessor)
+{
+	const bool componentTypeValid = accessor.component_type == TG3_COMPONENT_TYPE_FLOAT;
+
+	if (key == "POSITION" || key == "NORMAL") { return componentTypeValid && (accessor.type == TG3_TYPE_VEC3); }
+	if (key == "COLOR_0")
+	{
+		return componentTypeValid && (accessor.type == TG3_TYPE_VEC3 || accessor.type == TG3_TYPE_VEC4);
+	}
+	if (key == "TEXCOORD_0") { return componentTypeValid && (accessor.type == TG3_TYPE_VEC2); }
+	return true;
+}
+
+template <typename T>
+void writeAttribute(const tg3_model& model, const tg3_accessor& accessor, Vertex* destination, T Vertex::* member)
+{
+	const tg3_buffer_view& bufferView = model.buffer_views[accessor.buffer_view];
+	const tg3_buffer& buffer = model.buffers[bufferView.buffer];
+
+	const uint8_t* source = buffer.data.data + bufferView.byte_offset + accessor.byte_offset;
+	const size_t stride = static_cast<size_t>(tg3_accessor_byte_stride(&accessor, &bufferView));
+
+	for (uint64_t i = 0; i < accessor.count; ++i)
+	{
+		std::memcpy(&(destination[i].*member), source + i * stride, sizeof(T));
+	}
+}
+
+template <typename T>
+void copyIndices(const uint8_t* source, uint32_t* destination, uint64_t count)
+{
+	for (uint64_t i = 0; i < count; ++i)
+	{
+		T index;
+		std::memcpy(&index, source + i * sizeof(T), sizeof(T));
+		destination[i] = index;
+	}
+}
+} // namespace
 
 Model ModelLoader::loadGLTF(const std::filesystem::path& filepath)
 {
@@ -146,142 +190,123 @@ void ModelLoader::loadMeshes(const tg3_model& model, Model& loadedModel)
 	size_t vertexOffset = 0;
 	size_t indexOffset = 0;
 
-	// Attribute data copy lambda
-	auto writeAttribute =
-		[&model, &loadedModel, &vertexOffset]<typename T>(T Vertex::* member, const tg3_str_int_pair* attr) {
-			const tg3_accessor* accessor = &model.accessors[attr->value];
-			const tg3_buffer_view* bufferView = &model.buffer_views[accessor->buffer_view];
-			const tg3_buffer* buffer = &model.buffers[bufferView->buffer];
-
-			size_t componentCount;
-			switch (accessor->type)
-			{
-				case TG3_TYPE_VEC2: componentCount = 2; break;
-				case TG3_TYPE_VEC3: componentCount = 3; break;
-				case TG3_TYPE_VEC4: componentCount = 4; break;
-				default: throw ModelError("Unsupported mesh vertex attribute type!");
-			}
-
-			size_t componentSize;
-			switch (accessor->component_type)
-			{
-				case TG3_COMPONENT_TYPE_FLOAT: componentSize = sizeof(float); break;
-				default: throw ModelError("Unsupported mesh vertex attribute component type!");
-			}
-
-			const size_t bufferOffset = bufferView->byte_offset + accessor->byte_offset;
-			const size_t elementSize = componentCount * componentSize;
-			const size_t stride = bufferView->byte_stride != 0 ? bufferView->byte_stride : elementSize;
-
-			for (uint64_t j = 0; j < accessor->count; ++j)
-			{
-				const size_t elementOffset = bufferOffset + j * stride;
-				const float* data = reinterpret_cast<const float*>(buffer->data.data + elementOffset);
-
-				if constexpr (std::is_same<T, glm::vec3>())
-				{
-					loadedModel.vertices[vertexOffset + j].*member = glm::vec3(data[0], data[1], data[2]);
-				}
-				else if constexpr (std::is_same<T, glm::vec2>())
-				{
-					loadedModel.vertices[vertexOffset + j].*member = glm::vec2(data[0], data[1]);
-				}
-			}
-		};
-
 	for (uint32_t i = 0; i < model.meshes_count; ++i)
 	{
 		Mesh mesh;
-		const tg3_mesh* tg3Mesh = &model.meshes[i];
+		const tg3_mesh& tg3Mesh = model.meshes[i];
 
 		// Copy name
-		mesh.name = tg3Mesh->name.data != nullptr ? tg3Mesh->name.data : "No Name";
+		mesh.name = tg3Mesh.name.len > 0 ? std::string(tg3Mesh.name.data, tg3Mesh.name.len) : "No Name";
 
 		// Copy vertex data
-		mesh.subMeshes.resize(tg3Mesh->primitives_count);
-		for (uint32_t j = 0; j < tg3Mesh->primitives_count; ++j)
+		mesh.subMeshes.resize(tg3Mesh.primitives_count);
+		for (uint32_t j = 0; j < tg3Mesh.primitives_count; ++j)
 		{
-			const tg3_primitive* primitive = &tg3Mesh->primitives[j];
-			mesh.subMeshes[j].materialID =
-				primitive->material == -1 ? InvalidIndex : static_cast<uint32_t>(primitive->material);
-			mesh.subMeshes[j].vertexStart = vertexOffset;
+			const tg3_primitive& primitive = tg3Mesh.primitives[j];
+			if (primitive.mode != TG3_MODE_TRIANGLES) { throw ModelError("Unsupported primitive mode!"); }
 
+			SubMesh& subMesh = mesh.subMeshes[j];
+			subMesh.materialID = primitive.material == -1 ? InvalidIndex : static_cast<uint32_t>(primitive.material);
+			subMesh.vertexStart = vertexOffset;
+
+			// Grab the POSITION accessor for vertex count
 			const tg3_accessor* positionAccessor = nullptr;
-			for (uint32_t k = 0; k < primitive->attributes_count; ++k)
+			for (uint32_t k = 0; k < primitive.attributes_count; ++k)
 			{
-				if (strcmp(primitive->attributes[k].key.data, "POSITION") == 0)
+				const tg3_str_int_pair& attr = primitive.attributes[k];
+				if (std::string_view(attr.key.data, attr.key.len) == "POSITION")
 				{
-					positionAccessor = &model.accessors[primitive->attributes[k].value];
+					positionAccessor = &model.accessors[attr.value];
 					break;
 				}
 			}
 			if (!positionAccessor) { throw ModelError("Primitive missing POSITION attribute!"); }
 
-			mesh.subMeshes[j].vertexCount = positionAccessor->count;
-			loadedModel.vertices.resize(vertexOffset + positionAccessor->count);
+			const size_t vertexCount = positionAccessor->count;
 
-			for (uint32_t k = 0; k < primitive->attributes_count; ++k)
+			// Validate attributes
+			for (uint32_t k = 0; k < primitive.attributes_count; ++k)
 			{
-				const tg3_str_int_pair* attr = &primitive->attributes[k];
-				if (strcmp(attr->key.data, "POSITION") == 0)
+				const tg3_str_int_pair& attr = primitive.attributes[k];
+				const tg3_accessor& accessor = model.accessors[attr.value];
+
+				if (accessor.count != vertexCount) { throw ModelError("Invalid accessor count!"); }
+				if (accessor.buffer_view == -1) { throw ModelError("Invalid accessor buffer view!"); }
+				if (accessor.sparse.is_sparse) { throw ModelError("Invalid accessor sparsity!"); }
+				if (!supportedAccessorType(std::string_view(attr.key.data, attr.key.len), accessor))
 				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-					assert(accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-					writeAttribute(&Vertex::position, attr);
-				}
-				else if (strcmp(attr->key.data, "NORMAL") == 0)
-				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-					assert(accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-					writeAttribute(&Vertex::normal, attr);
-				}
-				else if (strcmp(attr->key.data, "COLOR_0") == 0)
-				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-					assert(accessor->type == TG3_TYPE_VEC3 || accessor->type == TG3_TYPE_VEC4);
-					assert(accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-					writeAttribute(&Vertex::color, attr);
-				}
-				else if (strcmp(attr->key.data, "TEXCOORD_0") == 0)
-				{
-					const tg3_accessor* accessor = &model.accessors[attr->value];
-					assert(accessor->type == TG3_TYPE_VEC2 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-					writeAttribute(&Vertex::uv, attr);
+					throw ModelError("Unsupported accessor type!");
 				}
 			}
-			vertexOffset += mesh.subMeshes[j].vertexCount;
+
+			// Write attributes
+			subMesh.vertexCount = vertexCount;
+			loadedModel.vertices.resize(vertexOffset + vertexCount);
+			Vertex* vertDestination = loadedModel.vertices.data() + vertexOffset;
+
+			for (uint32_t k = 0; k < primitive.attributes_count; ++k)
+			{
+				const tg3_str_int_pair& attr = primitive.attributes[k];
+				const tg3_accessor& accessor = model.accessors[attr.value];
+
+				const std::string_view key(attr.key.data, attr.key.len);
+
+				if (key == "POSITION") { writeAttribute(model, accessor, vertDestination, &Vertex::position); }
+				else if (key == "NORMAL") { writeAttribute(model, accessor, vertDestination, &Vertex::normal); }
+				else if (key == "COLOR_0") { writeAttribute(model, accessor, vertDestination, &Vertex::color); }
+				else if (key == "TEXCOORD_0") { writeAttribute(model, accessor, vertDestination, &Vertex::uv); }
+			}
+			vertexOffset += vertexCount;
 
 			// Copy index data
-			if (primitive->indices != -1)
+			subMesh.indexStart = indexOffset;
+
+			if (primitive.indices != -1)
 			{
-				const tg3_accessor* accessor = &model.accessors[primitive->indices];
-				const tg3_buffer_view* bufferView = &model.buffer_views[accessor->buffer_view];
-				const tg3_buffer* buffer = &model.buffers[bufferView->buffer];
-
-				mesh.subMeshes[j].indexStart = indexOffset;
-				mesh.subMeshes[j].indexCount = accessor->count;
-				loadedModel.indices.resize(indexOffset + accessor->count);
-
-				if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_INT)
+				const tg3_accessor& accessor = model.accessors[primitive.indices];
+				if (accessor.count == 0 || accessor.type != TG3_TYPE_SCALAR || accessor.buffer_view == -1
+					|| accessor.sparse.is_sparse)
 				{
-					const uint32_t* buffData = reinterpret_cast<const uint32_t*>(
-						buffer->data.data + bufferView->byte_offset + accessor->byte_offset
-					);
-					memcpy(&loadedModel.indices[indexOffset], buffData, accessor->count * sizeof(uint32_t));
-				}
-				else if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_SHORT)
-				{
-					const uint16_t* buffData = reinterpret_cast<const uint16_t*>(
-						buffer->data.data + bufferView->byte_offset + accessor->byte_offset
-					);
-					for (uint64_t k = 0; k < accessor->count; ++k)
-					{
-						loadedModel.indices[indexOffset + k] = static_cast<uint32_t>(buffData[k]);
-					}
+					throw ModelError("Invalid index accessor!");
 				}
 
-				indexOffset += mesh.subMeshes[j].indexCount;
+				const tg3_buffer_view& bufferView = model.buffer_views[accessor.buffer_view];
+				const tg3_buffer& buffer = model.buffers[bufferView.buffer];
+
+				subMesh.indexCount = accessor.count;
+				loadedModel.indices.resize(indexOffset + accessor.count);
+				uint32_t* indexDestination = loadedModel.indices.data() + indexOffset;
+
+				const uint8_t* source = buffer.data.data + bufferView.byte_offset + accessor.byte_offset;
+
+				switch (accessor.component_type)
+				{
+					case TG3_COMPONENT_TYPE_UNSIGNED_INT:
+						copyIndices<uint32_t>(source, indexDestination, accessor.count);
+						break;
+					case TG3_COMPONENT_TYPE_UNSIGNED_SHORT:
+						copyIndices<uint16_t>(source, indexDestination, accessor.count);
+						break;
+					case TG3_COMPONENT_TYPE_UNSIGNED_BYTE:
+						copyIndices<uint8_t>(source, indexDestination, accessor.count);
+						break;
+					default: throw ModelError("Invalid component type!");
+				}
+
+				// Validate indices
+				const uint32_t maxIndex = std::ranges::max(std::span(indexDestination, accessor.count));
+				if (maxIndex >= vertexCount) { throw ModelError("Index out of range!"); }
 			}
+			else
+			{
+				subMesh.indexCount = vertexCount;
+				loadedModel.indices.resize(indexOffset + vertexCount);
+				uint32_t* indexDestination = loadedModel.indices.data() + indexOffset;
+
+				std::iota(indexDestination, indexDestination + vertexCount, 0u);
+			}
+
+			indexOffset += subMesh.indexCount;
 		}
 
 		loadedModel.meshes.push_back(std::move(mesh));
