@@ -53,6 +53,9 @@ add_executable(vulkanapp
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/models.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/resources.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/scene.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/axes.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/controllers.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/controllers.cpp"
 )
 
 target_compile_features(vulkanapp PRIVATE cxx_std_23)

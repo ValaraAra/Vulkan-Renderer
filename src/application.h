@@ -1,10 +1,10 @@
 #pragma once
 #include "camera.h"
+#include "controllers.h"
 #include "models.h"
 #include "renderer.h"
 
 #include <SDL3/SDL.h>
-#include <cstdint>
 #include <glm/glm.hpp>
 
 class Application
@@ -19,12 +19,18 @@ class Application
 	bool handleEvent(SDL_Event& event);
 
   private:
-	static const uint32_t DEFAULT_WIDTH = 1280;
-	static const uint32_t DEFAULT_HEIGHT = 720;
+	static constexpr int DefaultWidth = 1280;
+	static constexpr int DefaultHeight = 720;
+
+	// Fifth of a second max delta time (5 fps, 200ms)
+	static constexpr float MaxDeltaTime = 0.2f;
 
 	SDL_Window* window = nullptr;
-	Camera camera;
 	Renderer renderer;
+
+	Camera camera;
+	InputState inputState;
+	CameraController cameraController;
 
 	ModelLoader modelLoader;
 

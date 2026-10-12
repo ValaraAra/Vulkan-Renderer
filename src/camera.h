@@ -1,13 +1,33 @@
 #pragma once
 
-#include <glm/gtc/constants.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include "axes.h"
+
+#include <glm/gtc/quaternion.hpp>
 
 class Camera
 {
   public:
-	void resize(const float aspect);
-	void update(const bool* keys, const float deltaTime);
+	Camera()
+	{
+		updateProjection();
+		setPose(position, orientation);
+	}
+
+	void setPerspective(const float newFovDeg, const float newAspect, const float newNearPlane, const float newFarPlane);
+	void setAspect(const float newAspect);
+	void setPose(const glm::vec3& newPosition, const glm::quat& newOrientation);
+
+	const glm::vec3& getPosition() const
+	{ return position; }
+	const glm::quat& getOrientation() const
+	{ return orientation; }
+	glm::vec3 getForward() const
+	{ return orientation * Direction::Forward; }
+
+	float getNearPlane() const
+	{ return farPlane; }
+	float getFarPlane() const
+	{ return farPlane; }
 
 	const glm::mat4& getView() const
 	{ return view; }
@@ -17,20 +37,14 @@ class Camera
 	{ return projection * view; }
 
   private:
-	static constexpr float epsilon = 0.01f;
-	static constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
+	void updateProjection();
 
-	static constexpr float fov = 75.0f;
-	static constexpr float near = 0.01f;
-	static constexpr float far = 1000.0f;
+	float fovDeg = 75.0f;
+	float aspect = 16.0f / 9.0f;
+	float nearPlane = 0.01f;
+	float farPlane = 1000.0f;
 
-	float yaw = glm::half_pi<float>();
-	float pitch = 0.0f;
-	float distance = 3.0f;
-
-	float sensitivityX = 1.0f;
-	float sensitivityY = 1.0f;
-
+	glm::quat orientation = glm::identity<glm::quat>();
 	glm::vec3 position{};
 	glm::mat4 view{};
 	glm::mat4 projection{};

@@ -1,45 +1,40 @@
 #include "camera.h"
 
 #include <SDL3/SDL_assert.h>
-#include <SDL3/SDL_scancode.h>
+#include <glm/gtc/matrix_transform.hpp>
 
-void Camera::resize(const float aspect)
+void Camera::setPerspective(const float newFovDeg, const float newAspect, const float newNearPlane, const float newFarPlane)
 {
-	SDL_assert(aspect > 0.0f);
-	projection = glm::perspectiveRH(glm::radians(fov), aspect, near, far);
+	SDL_assert(newFovDeg > 0.0f && newFovDeg < 180.0f);
+	SDL_assert(newAspect > 0.0f);
+	SDL_assert(newNearPlane > 0.0f && newFarPlane > newNearPlane);
+
+	fovDeg = newFovDeg;
+	aspect = newAspect;
+	nearPlane = newNearPlane;
+	farPlane = newFarPlane;
+
+	updateProjection();
 }
 
-void Camera::update(const bool* keys, const float deltaTime)
+void Camera::setAspect(const float newAspect)
 {
-	// Yaw
-	if (keys[SDL_SCANCODE_A]) { yaw += sensitivityX * deltaTime; }
-	if (keys[SDL_SCANCODE_D]) { yaw -= sensitivityX * deltaTime; }
+	if (aspect == newAspect) { return; }
 
-	// Pitch
-	if (keys[SDL_SCANCODE_W])
-	{
-		pitch += sensitivityY * deltaTime;
-		pitch = glm::clamp(pitch, -pitchLimit, pitchLimit);
-	}
-	if (keys[SDL_SCANCODE_S])
-	{
-		pitch -= sensitivityY * deltaTime;
-		pitch = glm::clamp(pitch, -pitchLimit, pitchLimit);
-	}
+	SDL_assert(newAspect > 0.0f);
+	aspect = newAspect;
 
-	// Zoom Speed
-	float zoomSpeed = 1.0f;
-	if (keys[SDL_SCANCODE_LSHIFT]) { zoomSpeed *= 3.0f; }
-	if (keys[SDL_SCANCODE_RSHIFT]) { zoomSpeed *= 10.0f; }
-
-	// Zoom
-	if (keys[SDL_SCANCODE_UP])
-	{
-		distance -= zoomSpeed * deltaTime;
-		distance = glm::max(distance, epsilon);
-	}
-	if (keys[SDL_SCANCODE_DOWN]) { distance += zoomSpeed * deltaTime; }
-
-	position = glm::vec3(glm::cos(yaw) * glm::cos(pitch), glm::sin(pitch), glm::sin(yaw) * glm::cos(pitch)) * distance;
-	view = glm::lookAtRH(position, glm::vec3(0), glm::vec3(0, 1, 0));
+	updateProjection();
 }
+
+void Camera::setPose(const glm::vec3& newPosition, const glm::quat& newOrientation)
+{
+	position = newPosition;
+	orientation = glm::normalize(newOrientation);
+
+	// Inverse of camera world transform
+	view = glm::mat4_cast(glm::conjugate(orientation)) * glm::translate(glm::mat4(1.0f), -position);
+}
+
+void Camera::updateProjection()
+{ projection = glm::perspectiveRH_ZO(glm::radians(fovDeg), aspect, nearPlane, farPlane); }

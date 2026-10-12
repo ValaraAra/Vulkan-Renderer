@@ -1,8 +1,6 @@
 #include "application.h"
 
-#include <cstdint>
 #include <filesystem>
-#include <glm/gtc/matrix_transform.hpp>
 #include <stb_image.h>
 #include <stdexcept>
 #include <tracy/Tracy.hpp>
@@ -16,8 +14,10 @@ bool Application::initialize()
 		return false;
 	}
 
+	inputState.keys = SDL_GetKeyboardState(nullptr);
+
 	// SDL window creation
-	window = SDL_CreateWindow("Vulkan Renderer", DEFAULT_WIDTH, DEFAULT_HEIGHT, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+	window = SDL_CreateWindow("Vulkan Renderer", DefaultWidth, DefaultHeight, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 	if (!window)
 	{
 		showError("SDL window creation failed! " + std::string(SDL_GetError()));
@@ -60,18 +60,22 @@ bool Application::initialize()
 
 void Application::run()
 {
-	// Get key state and start time
-	const bool* keys = SDL_GetKeyboardState(nullptr);
-	uint64_t previousTime = SDL_GetTicks();
+	// Set start time
+	uint64_t previousTime = SDL_GetTicksNS();
 
-	// Aspect ratio
-	float prevAspect = 0.0f;
-
-	// Game loop
 	running = true;
 	while (running)
 	{
 		ZoneScopedN("Tick");
+
+		// Update time
+		uint64_t currentTime = SDL_GetTicksNS();
+		const float deltaTime = std::min((currentTime - previousTime) / 1e9f, MaxDeltaTime);
+		previousTime = currentTime;
+
+		// Reset input state
+		inputState.mouseDelta = glm::vec2{0.0f};
+		inputState.scrollDelta = 0.0f;
 
 		// Handle events
 		SDL_Event event{0};
@@ -85,6 +89,7 @@ void Application::run()
 
 			if (!running) { break; }
 		}
+		SDL_GetRelativeMouseState(&inputState.mouseDelta.x, &inputState.mouseDelta.y);
 
 		// Get window size
 		int windowWidth, windowHeight;
@@ -96,27 +101,18 @@ void Application::run()
 		// Skip rendering if the window doesn't have a valid size
 		if (!validSize)
 		{
-			if (SDL_WaitEventTimeout(&event, 100)) { handleEvent(event); }
-			if (!running) { break; }
+			// Exclude skipped time from deltaTime
+			previousTime = SDL_GetTicksNS();
+
+			// Sleep for 100ms or until an event arrives
+			SDL_WaitEventTimeout(nullptr, 100);
 
 			continue;
 		}
 
-		// Resize camera if aspect changed
-		const float aspect = windowWidth / static_cast<float>(windowHeight);
-		if (prevAspect != aspect)
-		{
-			camera.resize(aspect);
-			prevAspect = aspect;
-		}
-
-		// Update time
-		uint64_t currentTime = SDL_GetTicks();
-		const float deltaTime = (currentTime - previousTime) / 1000.0f;
-		previousTime = currentTime;
-
-		// Update camera
-		camera.update(keys, deltaTime);
+		// Update camera and controller
+		camera.setAspect(windowWidth / static_cast<float>(windowHeight));
+		std::visit([&](auto& controller) { updateController(controller, camera, inputState, deltaTime); }, cameraController);
 
 		// Render
 		try
@@ -161,6 +157,12 @@ bool Application::handleEvent(SDL_Event& event)
 	if (event.type == SDL_EVENT_WINDOW_RESIZED)
 	{
 		renderer.invalidateSwapchain();
+		return true;
+	}
+
+	if (event.type == SDL_EVENT_MOUSE_WHEEL)
+	{
+		inputState.scrollDelta += event.wheel.y;
 		return true;
 	}
 
