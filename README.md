@@ -22,5 +22,18 @@ The plan is to grow this into an optimized engine handling both voxel terrain an
 - Assets
 	- glTF Loading (tinygltf)
 
+## Controls
+- General
+	- Left Click: Capture mouse and enable input
+	- Esc: Release mouse and disable input
+	- V: Toggle camera mode (orbit/first person)
+- Orbit Camera
+	- WASD: Rotate around the target (yaw/pitch)
+	- Mouse Scroll: Zoom toward/away from the target
+- First Person Camera
+	- WASD: Move relative to view direction
+	- Space/LCtrl: Move along world up axis (up/down)
+	- Mouse: Rotate view (yaw/pitch)
+
 # Acknowledgements
 Learned from the wonderful Vulkan YouTube series by [constref](https://www.youtube.com/@constref1983) and the well-known guide and samples by [Sascha Willems](https://github.com/SaschaWillems/Vulkan).
