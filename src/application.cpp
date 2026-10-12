@@ -4,6 +4,7 @@
 #include <stb_image.h>
 #include <stdexcept>
 #include <tracy/Tracy.hpp>
+#include <variant>
 
 bool Application::initialize()
 {
@@ -163,6 +164,22 @@ bool Application::handleEvent(SDL_Event& event)
 	if (event.type == SDL_EVENT_MOUSE_WHEEL)
 	{
 		inputState.scrollDelta += event.wheel.y;
+		return true;
+	}
+
+	// V toggles between orbit and first person camera controls
+	if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_V)
+	{
+		if (std::holds_alternative<OrbitController>(cameraController))
+		{
+			cameraController.emplace<FirstPersonController>(camera);
+			SDL_SetWindowRelativeMouseMode(window, true);
+		}
+		else
+		{
+			cameraController.emplace<OrbitController>(camera);
+			SDL_SetWindowRelativeMouseMode(window, false);
+		}
 		return true;
 	}
 

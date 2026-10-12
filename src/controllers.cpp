@@ -32,7 +32,7 @@ YawPitch yawPitchFromQuat(const glm::quat& quat)
 
 	return {
 		.yaw = std::atan2(-forward.x, -forward.z),
-		.pitch = std::asin(glm::clamp(forward.y, -1.0f, 1.0f)),
+		.pitch = glm::clamp(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)), -PitchLimit, PitchLimit),
 	};
 }
 } // namespace
@@ -41,9 +41,8 @@ YawPitch yawPitchFromQuat(const glm::quat& quat)
 OrbitController::OrbitController(const Camera& camera)
 {
 	YawPitch yawPitch = yawPitchFromQuat(camera.getOrientation());
-
 	yaw = yawPitch.yaw;
-	pitch = glm::clamp(yawPitch.pitch, -PitchLimit, PitchLimit);
+	pitch = yawPitch.pitch;
 
 	target = camera.getPosition() + camera.getForward() * distance;
 }
@@ -73,5 +72,45 @@ void updateController(OrbitController& controller, Camera& camera, const InputSt
 }
 
 // First Person Controller
-FirstPersonController::FirstPersonController(const Camera& camera) {}
-void updateController(FirstPersonController& controller, Camera& camera, const InputState& input, float deltaTime) {}
+FirstPersonController::FirstPersonController(const Camera& camera)
+{
+	position = camera.getPosition();
+
+	YawPitch yawPitch = yawPitchFromQuat(camera.getOrientation());
+	yaw = yawPitch.yaw;
+	pitch = yawPitch.pitch;
+}
+
+void updateController(FirstPersonController& controller, Camera& camera, const InputState& input, float deltaTime)
+{
+	// Yaw
+	controller.yaw -= input.mouseDelta.x * controller.yawSensitivity;
+
+	// Pitch
+	controller.pitch -= input.mouseDelta.y * controller.pitchSensitivity;
+	controller.pitch = glm::clamp(controller.pitch, -PitchLimit, PitchLimit);
+
+	// Get updated orientation
+	const glm::quat orientation = quatFromYawPitch(controller.yaw, controller.pitch);
+
+	// Movement
+	const glm::vec3 forward = orientation * Direction::Forward;
+	const glm::vec3 right = orientation * Direction::Right;
+
+	glm::vec3 movement{0.0f};
+
+	if (input.keys[SDL_SCANCODE_D]) { movement += right; }
+	if (input.keys[SDL_SCANCODE_A]) { movement -= right; }
+	if (input.keys[SDL_SCANCODE_W]) { movement += forward; }
+	if (input.keys[SDL_SCANCODE_S]) { movement -= forward; }
+	if (input.keys[SDL_SCANCODE_SPACE]) { movement += Direction::Up; }
+	if (input.keys[SDL_SCANCODE_LCTRL]) { movement -= Direction::Up; }
+
+	if (glm::dot(movement, movement) > 0.0f)
+	{
+		controller.position += glm::normalize(movement) * controller.moveSpeed * deltaTime;
+	}
+
+	// Update Camera
+	camera.setPose(controller.position, orientation);
+}

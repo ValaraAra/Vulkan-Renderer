@@ -12,6 +12,7 @@ struct InputState
 	float scrollDelta = 0.0f;
 };
 
+// WASD orbits the target at specified distance, mouse scroll zooms
 struct OrbitController
 {
 	glm::vec3 target{0.0f};
@@ -27,6 +28,7 @@ struct OrbitController
 	explicit OrbitController(const Camera& camera);
 };
 
+// WASD moves around, Space/LCtrl moves up/down, mouse looks around
 struct FirstPersonController
 {
 	glm::vec3 position{0.0f};
@@ -35,8 +37,8 @@ struct FirstPersonController
 	float pitch = 0.0f;
 
 	float moveSpeed = 1.0f;
-	float yawSensitivity = 1.0f;
-	float pitchSensitivity = 1.0f;
+	float yawSensitivity = 0.01f;
+	float pitchSensitivity = 0.01f;
 
 	FirstPersonController() = default;
 	explicit FirstPersonController(const Camera& camera);
