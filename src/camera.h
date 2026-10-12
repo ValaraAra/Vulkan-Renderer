@@ -25,7 +25,7 @@ class Camera
 	{ return orientation * Direction::Forward; }
 
 	float getNearPlane() const
-	{ return farPlane; }
+	{ return nearPlane; }
 	float getFarPlane() const
 	{ return farPlane; }
 

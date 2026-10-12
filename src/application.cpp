@@ -15,8 +15,6 @@ bool Application::initialize()
 		return false;
 	}
 
-	inputState.keys = SDL_GetKeyboardState(nullptr);
-
 	// SDL window creation
 	window = SDL_CreateWindow("Vulkan Renderer", DefaultWidth, DefaultHeight, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 	if (!window)
@@ -74,9 +72,8 @@ void Application::run()
 		const float deltaTime = std::min((currentTime - previousTime) / 1e9f, MaxDeltaTime);
 		previousTime = currentTime;
 
-		// Reset input state
-		inputState.mouseDelta = glm::vec2{0.0f};
-		inputState.scrollDelta = 0.0f;
+		// Reset scroll delta
+		scrollDelta = 0.0f;
 
 		// Handle events
 		SDL_Event event{0};
@@ -90,7 +87,25 @@ void Application::run()
 
 			if (!running) { break; }
 		}
-		SDL_GetRelativeMouseState(&inputState.mouseDelta.x, &inputState.mouseDelta.y);
+
+		// Camera input state
+		glm::vec2 mouseDelta{0.0f};
+		SDL_GetRelativeMouseState(&mouseDelta.x, &mouseDelta.y);
+
+		InputState inputState{};
+		if (SDL_GetWindowRelativeMouseMode(window))
+		{
+			const bool* keys = SDL_GetKeyboardState(nullptr);
+
+			inputState.moveAxis.x = static_cast<float>(keys[SDL_SCANCODE_D] - keys[SDL_SCANCODE_A]);
+			inputState.moveAxis.y = static_cast<float>(keys[SDL_SCANCODE_SPACE] - keys[SDL_SCANCODE_LCTRL]);
+			inputState.moveAxis.z = static_cast<float>(keys[SDL_SCANCODE_W] - keys[SDL_SCANCODE_S]);
+
+			inputState.lookDelta = mouseDelta;
+			inputState.scrollDelta = scrollDelta;
+
+			inputState.shift = keys[SDL_SCANCODE_LSHIFT];
+		}
 
 		// Get window size
 		int windowWidth, windowHeight;
@@ -111,8 +126,10 @@ void Application::run()
 			continue;
 		}
 
-		// Update camera and controller
+		// Update camera
 		camera.setAspect(windowWidth / static_cast<float>(windowHeight));
+
+		// Update controller
 		std::visit([&](auto& controller) { updateController(controller, camera, inputState, deltaTime); }, cameraController);
 
 		// Render
@@ -161,26 +178,43 @@ bool Application::handleEvent(SDL_Event& event)
 		return true;
 	}
 
-	if (event.type == SDL_EVENT_MOUSE_WHEEL)
+	// Clicking into the window captures the mouse
+	if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
 	{
-		inputState.scrollDelta += event.wheel.y;
+		SDL_SetWindowRelativeMouseMode(window, true);
 		return true;
 	}
 
-	// V toggles between orbit and first person camera controls
-	if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_V)
+	// Input disabled unless mouse is captured
+	if (SDL_GetWindowRelativeMouseMode(window))
 	{
-		if (std::holds_alternative<OrbitController>(cameraController))
+		// Mouse scrolling delta
+		if (event.type == SDL_EVENT_MOUSE_WHEEL)
 		{
-			cameraController.emplace<FirstPersonController>(camera);
-			SDL_SetWindowRelativeMouseMode(window, true);
+			scrollDelta += event.wheel.y;
+			return true;
 		}
-		else
+
+		// Escape frees the mouse
+		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_ESCAPE)
 		{
-			cameraController.emplace<OrbitController>(camera);
 			SDL_SetWindowRelativeMouseMode(window, false);
+			return true;
 		}
-		return true;
+
+		// V toggles between orbit and first person camera controls
+		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_V)
+		{
+			if (std::holds_alternative<OrbitController>(cameraController))
+			{
+				cameraController.emplace<FirstPersonController>(camera);
+			}
+			else
+			{
+				cameraController.emplace<OrbitController>(camera);
+			}
+			return true;
+		}
 	}
 
 	return true;

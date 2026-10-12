@@ -29,8 +29,8 @@ class Application
 	Renderer renderer;
 
 	Camera camera;
-	InputState inputState;
 	CameraController cameraController;
+	float scrollDelta = 0.0f;
 
 	ModelLoader modelLoader;
 

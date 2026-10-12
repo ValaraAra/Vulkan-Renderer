@@ -7,9 +7,10 @@
 
 struct InputState
 {
-	const bool* keys = nullptr;
-	glm::vec2 mouseDelta{0.0f};
+	glm::vec3 moveAxis{0.0f};
+	glm::vec2 lookDelta{0.0f};
 	float scrollDelta = 0.0f;
+	bool shift = false;
 };
 
 // WASD orbits the target at specified distance, mouse scroll zooms
@@ -22,7 +23,7 @@ struct OrbitController
 	float distance = 3.0f;
 
 	float zoomRate = 0.1f;
-	float roationSpeed = 1.0f;
+	float rotationSpeed = 1.0f;
 
 	OrbitController() = default;
 	explicit OrbitController(const Camera& camera);
@@ -36,9 +37,9 @@ struct FirstPersonController
 	float yaw = 0.0f;
 	float pitch = 0.0f;
 
-	float moveSpeed = 1.0f;
-	float yawSensitivity = 0.01f;
-	float pitchSensitivity = 0.01f;
+	float moveSpeed = 2.0f;
+	float yawSensitivity = 0.005f;
+	float pitchSensitivity = 0.005f;
 
 	FirstPersonController() = default;
 	explicit FirstPersonController(const Camera& camera);
