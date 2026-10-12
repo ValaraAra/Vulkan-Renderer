@@ -10,13 +10,17 @@
 	// Clangd
 	"clangd.arguments": [
 		"--compile-commands-dir=${workspaceFolder}/build/debug",
-		"--header-insertion=iwyu",
-		"--clang-tidy"
+		"--header-insertion=never",
+		"--clang-tidy",
+		"--path-mappings=g:/Projects=G:/Projects",
 	],
 	"[cpp]": {
 		"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
-		"editor.formatOnSave": true
+		"editor.formatOnSave": true,
 	},
+	"C_Cpp.autocomplete": "disabled",
+	"C_Cpp.errorSquiggles": "disabled",
+	"C_Cpp.formatting": "disabled",
 	"C_Cpp.intelliSenseEngine": "disabled",
 
 	// Editor
