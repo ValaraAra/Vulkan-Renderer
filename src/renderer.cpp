@@ -847,7 +847,7 @@ VkPhysicalDevice Renderer::selectPhysicalDevice()
 	std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
 	vkGetPhysicalDeviceSurfaceFormatsKHR(selectedDevice, surface, &formatCount, surfaceFormats.data());
 
-	bool formatSupported = std::ranges::contains(surfaceFormats, swapchainFormat, &VkSurfaceFormatKHR::format);
+	bool formatSupported = std::ranges::contains(surfaceFormats, SwapchainFormat, &VkSurfaceFormatKHR::format);
 	if (!formatSupported) { throw RenderError("Requested swapchain format not supported by the selected device."); }
 
 	return selectedDevice;
@@ -1036,7 +1036,7 @@ void Renderer::createSwapchain()
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
 		.minImageCount = requestedImageCount,
-		.imageFormat = swapchainFormat,
+		.imageFormat = SwapchainFormat,
 		.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
 		.imageExtent{.width = swapchainWidth, .height = swapchainHeight},
 		.imageArrayLayers = 1,
@@ -1065,7 +1065,7 @@ void Renderer::createSwapchain()
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = swapchainImages[i],
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = swapchainFormat,
+			.format = SwapchainFormat,
 			.subresourceRange{
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 				.baseMipLevel = 0,
@@ -1097,7 +1097,7 @@ void Renderer::createSwapchain()
 	VkImageCreateInfo depthImageInfo{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
-		.format = depthFormat,
+		.format = DepthFormat,
 		.extent{.width = swapchainWidth, .height = swapchainHeight, .depth = 1},
 		.mipLevels = 1,
 		.arrayLayers = 1,
@@ -1123,7 +1123,7 @@ void Renderer::createSwapchain()
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = depthImage,
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
-		.format = depthFormat,
+		.format = DepthFormat,
 		.subresourceRange{
 			.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1
 		}
@@ -1343,8 +1343,8 @@ VkPipeline Renderer::createGraphicsPipeline()
 	VkPipelineRenderingCreateInfo renderingInfo{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
 		.colorAttachmentCount = 1,
-		.pColorAttachmentFormats = &swapchainFormat,
-		.depthAttachmentFormat = depthFormat,
+		.pColorAttachmentFormats = &SwapchainFormat,
+		.depthAttachmentFormat = DepthFormat,
 	};
 
 	// Finally, create the graphics pipeline

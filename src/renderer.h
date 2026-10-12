@@ -120,8 +120,8 @@ class Renderer
 	constexpr static uint32_t MaxFramesInFlight{2};
 	constexpr static size_t MaxTextures{1024};
 	constexpr static size_t InitialDrawBufferSize{1024};
-	constexpr static VkFormat swapchainFormat{VK_FORMAT_B8G8R8A8_SRGB};
-	constexpr static VkFormat depthFormat{VK_FORMAT_D32_SFLOAT};
+	constexpr static VkFormat SwapchainFormat{VK_FORMAT_B8G8R8A8_SRGB};
+	constexpr static VkFormat DepthFormat{VK_FORMAT_D32_SFLOAT};
 
 	SDL_Window* window{nullptr};
 
